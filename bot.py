@@ -1,4 +1,5 @@
 import os
+import asyncio
 import requests
 from bs4 import BeautifulSoup
 from telegram import Update
@@ -27,16 +28,12 @@ async def search_torob(query: str) -> str:
             return "❌ خطا در اتصال به ترب. لطفاً دوباره امتحان کن."
 
         soup = BeautifulSoup(response.text, "html.parser")
-        
-        # Find all anchor tags that look like product links
         all_links = soup.find_all("a", href=True)
         product_links = [a for a in all_links if "/p/" in a.get("href", "")]
 
         if not product_links:
             return (
                 f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
-                f"پیشنهاد: اسم قطعه رو دقیق‌تر بنویس.\n"
-                f"مثال: فیلتر روغن پراید 131\n\n"
                 f"🔗 جستجوی مستقیم در ترب:\n"
                 f"https://torob.com/search/?query={encoded}"
             )
@@ -54,20 +51,15 @@ async def search_torob(query: str) -> str:
                 continue
             seen.add(href)
 
-            # Get name
             name = a.get_text(strip=True)
             if not name or len(name) < 3:
-                # Try child elements
                 p = a.find("p")
                 name = p.get_text(strip=True) if p else ""
             if not name or len(name) < 3:
                 continue
 
-            # Get price from nearby element
             price_text = ""
-            price_span = a.find("span", string=lambda s: s and "تومان" in s if s else False)
-            if not price_span:
-                price_span = a.find(lambda tag: tag.name in ["span", "div", "p"] and tag.string and any(c.isdigit() for c in tag.string))
+            price_span = a.find(lambda tag: tag.name in ["span", "div", "p"] and tag.string and any(c.isdigit() for c in tag.string))
             if price_span:
                 price_text = price_span.get_text(strip=True)
 
@@ -107,12 +99,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True
     )
 
-def main():
+async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("✅ ربات شروع به کار کرد...")
-    app.run_polling(drop_pending_updates=True)
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
