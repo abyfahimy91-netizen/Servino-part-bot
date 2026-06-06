@@ -19,86 +19,88 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_torob(query: str) -> str:
     try:
-        search_url = f"https://torob.com/search/?query={requests.utils.quote(query)}"
-        response = requests.get(search_url, headers=HEADERS, timeout=10)
-        
+        encoded = requests.utils.quote(query)
+        search_url = f"https://torob.com/search/?query={encoded}"
+        response = requests.get(search_url, headers=HEADERS, timeout=15)
+
         if response.status_code != 200:
             return "❌ خطا در اتصال به ترب. لطفاً دوباره امتحان کن."
-        
+
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Find product cards
-        products = soup.find_all("a", class_="SearchResultItem_itemLink__UxDhj", limit=5)
-        
-        if not products:
-            # Try alternative class names
-            products = soup.find_all("div", attrs={"data-testid": "search-result-item"}, limit=5)
-        
-        if not products:
-            return f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\nپیشنهاد: اسم قطعه رو دقیق‌تر بنویس. مثلاً: فیلتر روغن پراید 131"
+        # Find all anchor tags that look like product links
+        all_links = soup.find_all("a", href=True)
+        product_links = [a for a in all_links if "/p/" in a.get("href", "")]
+
+        if not product_links:
+            return (
+                f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
+                f"پیشنهاد: اسم قطعه رو دقیق‌تر بنویس.\n"
+                f"مثال: فیلتر روغن پراید 131\n\n"
+                f"🔗 جستجوی مستقیم در ترب:\n"
+                f"https://torob.com/search/?query={encoded}"
+            )
 
         result = f"🔍 نتایج جستجو برای: *{query}*\n"
         result += "━━━━━━━━━━━━━━━\n\n"
-        
-        found = False
-        for i, product in enumerate(products[:5], 1):
-            try:
-                # Get product name
-                name_elem = product.find("p", class_="SearchResultItem_productName__UVqAn")
-                if not name_elem:
-                    name_elem = product.find("h2")
-                if not name_elem:
-                    name_elem = product.find("p")
-                
-                name = name_elem.get_text(strip=True) if name_elem else "نامشخص"
-                
-                # Get price
-                price_elem = product.find("span", class_="SearchResultItem_price__BhWNI")
-                if not price_elem:
-                    price_elem = product.find("span", class_=lambda x: x and "price" in x.lower() if x else False)
-                
-                price = price_elem.get_text(strip=True) if price_elem else "قیمت نامشخص"
-                
-                # Get link
-                href = product.get("href", "")
-                if href and not href.startswith("http"):
-                    href = "https://torob.com" + href
-                
-                if name != "نامشخص":
-                    found = True
-                    result += f"*{i}. {name}*\n"
-                    result += f"💰 قیمت: {price} تومان\n"
-                    if href:
-                        result += f"🔗 [مشاهده فروشنده‌ها]({href})\n"
-                    result += "\n"
-                    
-            except Exception:
+
+        count = 0
+        seen = set()
+        for a in product_links:
+            if count >= 5:
+                break
+            href = a.get("href", "")
+            if href in seen:
                 continue
-        
-        if not found:
-            return f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\nپیشنهاد: اسم قطعه رو دقیق‌تر بنویس."
-        
+            seen.add(href)
+
+            # Get name
+            name = a.get_text(strip=True)
+            if not name or len(name) < 3:
+                # Try child elements
+                p = a.find("p")
+                name = p.get_text(strip=True) if p else ""
+            if not name or len(name) < 3:
+                continue
+
+            # Get price from nearby element
+            price_text = ""
+            price_span = a.find("span", string=lambda s: s and "تومان" in s if s else False)
+            if not price_span:
+                price_span = a.find(lambda tag: tag.name in ["span", "div", "p"] and tag.string and any(c.isdigit() for c in tag.string))
+            if price_span:
+                price_text = price_span.get_text(strip=True)
+
+            full_url = f"https://torob.com{href}" if not href.startswith("http") else href
+
+            count += 1
+            result += f"*{count}. {name[:60]}*\n"
+            if price_text:
+                result += f"💰 {price_text}\n"
+            result += f"🔗 [مشاهده فروشنده‌ها]({full_url})\n\n"
+
+        if count == 0:
+            return (
+                f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
+                f"🔗 جستجوی مستقیم:\nhttps://torob.com/search/?query={encoded}"
+            )
+
         result += "━━━━━━━━━━━━━━━\n"
         result += "⚡ داده‌ها از ترب.کام"
-        
         return result
-        
+
     except requests.Timeout:
         return "⏱ ترب دیر جواب داد. دوباره امتحان کن."
     except Exception as e:
-        return f"❌ خطای غیرمنتظره: {str(e)}"
+        return f"❌ خطا: {str(e)}"
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
-    
     if len(query) < 2:
         await update.message.reply_text("لطفاً اسم قطعه رو کامل‌تر بنویس.")
         return
-    
     await update.message.reply_text("🔎 دارم توی ترب دنبالش می‌گردم...")
-    
     result = await search_torob(query)
-    
     await update.message.reply_text(
         result,
         parse_mode="Markdown",
@@ -110,7 +112,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("✅ ربات شروع به کار کرد...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
