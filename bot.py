@@ -1,15 +1,11 @@
 import os
 import asyncio
-import requests
-from bs4 import BeautifulSoup
+from torob_integration.api import Torob
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.environ.get("BOT_TOKEN")
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+torob = Torob()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -20,69 +16,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_torob(query: str) -> str:
     try:
-        encoded = requests.utils.quote(query)
-        search_url = f"https://torob.com/search/?query={encoded}"
-        response = requests.get(search_url, headers=HEADERS, timeout=15)
-
-        if response.status_code != 200:
-            return "❌ خطا در اتصال به ترب. لطفاً دوباره امتحان کن."
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        all_links = soup.find_all("a", href=True)
-        product_links = [a for a in all_links if "/p/" in a.get("href", "")]
-
-        if not product_links:
+        results = torob.search(query, page=0)
+        
+        if not results or "results" not in results:
             return (
                 f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
-                f"🔗 جستجوی مستقیم در ترب:\n"
-                f"https://torob.com/search/?query={encoded}"
+                f"پیشنهاد: اسم قطعه رو دقیق‌تر بنویس."
             )
+
+        items = results["results"]
+        if not items:
+            return f"❌ نتیجه‌ای برای «{query}» پیدا نشد."
 
         result = f"🔍 نتایج جستجو برای: *{query}*\n"
         result += "━━━━━━━━━━━━━━━\n\n"
 
-        count = 0
-        seen = set()
-        for a in product_links:
-            if count >= 5:
-                break
-            href = a.get("href", "")
-            if href in seen:
-                continue
-            seen.add(href)
+        for i, item in enumerate(items[:5], 1):
+            name = item.get("name", "نامشخص")
+            min_price = item.get("price1", None)
+            max_price = item.get("price2", None)
+            link = f"https://torob.com/p/{item.get('token', '')}"
 
-            name = a.get_text(strip=True)
-            if not name or len(name) < 3:
-                p = a.find("p")
-                name = p.get_text(strip=True) if p else ""
-            if not name or len(name) < 3:
-                continue
-
-            price_text = ""
-            price_span = a.find(lambda tag: tag.name in ["span", "div", "p"] and tag.string and any(c.isdigit() for c in tag.string))
-            if price_span:
-                price_text = price_span.get_text(strip=True)
-
-            full_url = f"https://torob.com{href}" if not href.startswith("http") else href
-
-            count += 1
-            result += f"*{count}. {name[:60]}*\n"
-            if price_text:
-                result += f"💰 {price_text}\n"
-            result += f"🔗 [مشاهده فروشنده‌ها]({full_url})\n\n"
-
-        if count == 0:
-            return (
-                f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
-                f"🔗 جستجوی مستقیم:\nhttps://torob.com/search/?query={encoded}"
-            )
+            result += f"*{i}. {name[:60]}*\n"
+            if min_price and max_price:
+                result += f"💰 {format(min_price, ',')} تا {format(max_price, ',')} تومان\n"
+            elif min_price:
+                result += f"💰 از {format(min_price, ',')} تومان\n"
+            result += f"🔗 [مشاهده فروشنده‌ها]({link})\n\n"
 
         result += "━━━━━━━━━━━━━━━\n"
         result += "⚡ داده‌ها از ترب.کام"
         return result
 
-    except requests.Timeout:
-        return "⏱ ترب دیر جواب داد. دوباره امتحان کن."
     except Exception as e:
         return f"❌ خطا: {str(e)}"
 
