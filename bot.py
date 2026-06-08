@@ -1,5 +1,6 @@
 import os
 import asyncio
+import requests
 from torob_integration.api import Torob
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -19,10 +20,7 @@ async def search_torob(query: str) -> str:
         results = torob.search(query, page=0)
         
         if not results or "results" not in results:
-            return (
-                f"❌ نتیجه‌ای برای «{query}» پیدا نشد.\n\n"
-                f"پیشنهاد: اسم قطعه رو دقیق‌تر بنویس."
-            )
+            return f"❌ نتیجه‌ای برای «{query}» پیدا نشد."
 
         items = results["results"]
         if not items:
@@ -65,6 +63,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def main():
+    # قطع همه اتصالات قبلی
+    try:
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true")
+    except:
+        pass
+    
+    await asyncio.sleep(2)
+    
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
